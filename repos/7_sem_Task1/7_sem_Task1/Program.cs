@@ -1,0 +1,123 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using NN_Inference;
+using System.IO;
+using System.Collections.Concurrent;
+
+namespace _7_sem_Task1
+{
+    class Program
+    {
+        public static void Main(string[] args)
+        {
+            //string dir_path = "D:\\c#\\7_sem\\1_task\\models\\mnist\\mnist\\data\\data\testing\\9\\";
+            string dir_path = Console.ReadLine();
+            CancellationTokenSource cancelTokenSource = new CancellationTokenSource();
+            CancellationToken token = cancelTokenSource.Token;
+
+            string model = "mnist";
+            string model_path = "D:\\c#\\7_sem\\1_task\\models\\" + model + "\\" + model + "\\model.onnx";
+
+            Inferencer inferencer = new Inferencer(dir_path, model_path, token);
+
+            int num_files = new DirectoryInfo(dir_path).GetFiles().Length;
+            var listen_task = new Task(() =>
+            {
+                while (inferencer.resultCollection.Count != num_files)
+                {
+                    string mes = Console.ReadLine();
+                    if (mes == "End")
+                    {
+                        cancelTokenSource.Cancel();
+                        Console.WriteLine("Cancel token");
+                        Thread.Sleep(1000);
+                        break;
+                    }
+                }
+            });
+            listen_task.Start();
+
+            var po = new ParallelOptions { CancellationToken = token };
+            var tasks = new Task[num_files];
+            try
+            {
+                for (int i = 0; i < num_files; i++)
+                {
+                    tasks[i] = Task.Factory.StartNew(pi =>
+                    {
+                        int idx = (int)pi;
+                        inferencer.CalcInference(idx);
+                    }, i);
+                }
+            }
+            catch (OperationCanceledException ex)
+            {
+                Console.WriteLine("Операция прервана");
+            }
+            finally
+            {
+                Task.WaitAll(tasks);
+                Task.WaitAll(listen_task);
+                cancelTokenSource.Dispose();
+
+                foreach (string res in inferencer.resultCollection)
+                {
+                    Console.WriteLine(res + "\n");
+                }
+                //Console.ReadLine();
+            }
+        }
+    }
+
+    class Inferencer
+    {
+        string dir_path;
+        string model_path;
+        CancellationToken token;
+        string[] files;
+        public ConcurrentBag<string> resultCollection = new ConcurrentBag<string>();
+
+        public Inferencer(string dir_path, string model_path, CancellationToken token)
+        {
+            this.dir_path = dir_path;
+            this.model_path = model_path;
+            this.token = token;
+            this.files = (Directory.GetFiles(dir_path));
+        }
+
+        public void CalcInference(int idx)
+        {
+            Thread.Sleep(20000);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+            Console.WriteLine("After sleep");
+            string sample_name = files[idx];
+            NN_Inferencer inference_obj = new NN_Inferencer(model_path, sample_name);
+            float[] result = inference_obj.forward();
+            int res_class = 0;
+            float res_score = -10000;
+            double e = Math.E;
+            double sum_exp = 0;
+            for (int j = 0; j < result.Length; j++)
+            {
+                sum_exp += Math.Pow(e, result[j]);
+                if (result[j] > res_score)
+                {
+                    res_score = result[j];
+                    res_class = j;
+                }
+            }
+            double res_prob = Math.Pow(e, res_score) / sum_exp;
+            string res_string = sample_name + " class : " + res_class.ToString() + ", with prob : " + res_prob.ToString();
+            Console.WriteLine(res_string);
+            resultCollection.Add(res_string);
+        }
+
+    }
+}
